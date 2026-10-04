@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Paint</title>
+<style>
+:root{--bg:#3a3a3a;--panel:#4a4a4a;--line:#222;--text:#f1f1f1;--accent:#7CFC4C;--paper:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+:root:not([data-theme="light"]){color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+header{background:#2b2b2b;padding:6px 12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}
+header b{margin-right:auto}
+button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:3px;padding:5px 10px;cursor:pointer}
+button:hover{background:#5a5a5a}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+main{flex:1;display:flex;min-height:0}
+#tools{width:92px;background:var(--panel);padding:8px;display:grid;grid-template-columns:1fr;gap:6px;align-content:start;border-right:1px solid var(--line)}
+.tool{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:12px;padding:6px 2px}
+.tool svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.tool[aria-pressed="true"]{background:#222;border-color:var(--accent);color:var(--accent)}
+#stage{flex:1;overflow:auto;padding:10px;background:#2b2b2b}
+canvas{background:var(--paper);display:block;cursor:crosshair;touch-action:none;max-width:none}
+footer{background:var(--panel);border-top:1px solid var(--line);padding:8px 12px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+#cur{width:34px;height:34px;border:2px solid #fff;background:#000}
+#pal{display:grid;grid-template-columns:repeat(14,22px);gap:2px}
+#pal button{width:22px;height:22px;padding:0;border-radius:0;border:1px solid #111}
+label{display:flex;align-items:center;gap:8px;font-size:14px}
+input[type=range]{width:140px;accent-color:var(--accent)}
+#status{margin-left:auto;font-size:13px;opacity:.85}
+@media(max-width:600px){#tools{width:64px}.tool span{display:none}#pal{grid-template-columns:repeat(7,22px)}}
+</style>
+</head>
+<body>
+<header>
+  <b>My Paint</b>
+  <button id="undo">ย้อนกลับ</button>
+  <button id="clear">ล้างกระดาน</button>
+  <button id="save">บันทึกเป็น PNG</button>
+</header>
+<main>
+  <div id="tools" role="toolbar" aria-label="เครื่องมือ">
+    <button class="tool" data-tool="pencil" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M4 20l1-5L16 4l4 4L9 19z"/></svg><span>ดินสอ</span></button>
+    <button class="tool" data-tool="line" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 20L20 4"/></svg><span>เส้นตรง</span></button>
+    <button class="tool" data-tool="rect" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12"/></svg><span>สี่เหลี่ยม</span></button>
+    <button class="tool" data-tool="ellipse" aria-pressed="false"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="8" ry="6"/></svg><span>วงรี</span></button>
+    <button class="tool" data-tool="eraser" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 17l9-11 8 6-7 8H7zM10 20h10"/></svg><span>ยางลบ</span></button>
+  </div>
+  <div id="stage"><canvas id="c" width="1000" height="600"></canvas></div>
+</main>
+<footer>
+  <div id="cur" title="สีปัจจุบัน"></div>
+  <div id="pal" aria-label="จานสี"></div>
+  <label>สีอื่น <input type="color" id="picker" value="#000000"></label>
+  <label>ความหนา <input type="range" id="size" min="1" max="40" value="3"> <span id="sizeVal">3</span> px</label>
+  <div id="status">เครื่องมือ: ดินสอ</div>
+</footer>
+<script>
+const cv = document.getElementById('c'), ctx = cv.getContext('2d', {willReadFrequently:true});
+const names = {pencil:'ดินสอ', line:'เส้นตรง', rect:'สี่เหลี่ยม', ellipse:'วงรี', eraser:'ยางลบ'};
+// แต่ละเครื่องมือจำสีและความหนาของตัวเอง
+const cfg = {
+  pencil:{color:'#000000',size:3}, line:{color:'#000000',size:3},
+  rect:{color:'#000000',size:3}, ellipse:{color:'#000000',size:3},
+  eraser:{color:'#ffffff',size:16}
+};
+let tool = 'pencil', drawing = false, sx = 0, sy = 0, snap = null, last = null;
+const history = [];
+
+ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cv.width,cv.height);
+ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+pushHistory();
+
+const colors = ['#000000','#808080','#800000','#808000','#008000','#008080','#000080','#800080','#ffffff','#c0c0c0','#ff0000','#ffff00','#00ff00','#00ffff','#0000ff','#ff00ff','#ff8000','#8b4513','#ff69b4','#7CFC4C','#4da6ff','#ffd966','#a64dff','#00cc99','#996633','#ff9999','#99ccff','#ccff99','#ffe0b3','#333333'];
+const pal = document.getElementById('pal');
+colors.slice(0,28).forEach(c => {
+  const b = document.createElement('button');
+  b.style.background = c; b.title = c; b.setAttribute('aria-label','สี '+c);
+  b.onclick = () => setColor(c);
+  pal.appendChild(b);
+});
+
+const picker = document.getElementById('picker'), size = document.getElementById('size'),
+      sizeVal = document.getElementById('sizeVal'), cur = document.getElementById('cur'),
+      status = document.getElementById('status');
+
+function refreshUI(){
+  const s = cfg[tool];
+  cur.style.background = s.color; picker.value = s.color;
+  size.value = s.size; sizeVal.textContent = s.size;
+  status.textContent = 'เครื่องมือ: ' + names[tool];
+  document.querySelectorAll('.tool').forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === tool));
+}
+function setColor(c){ cfg[tool].color = c; refreshUI(); }
+document.querySelectorAll('.tool').forEach(b => b.onclick = () => { tool = b.dataset.tool; refreshUI(); });
+picker.oninput = e => setColor(e.target.value);
+size.oninput = e => { cfg[tool].size = +e.target.value; sizeVal.textContent = e.target.value; };
+
+function pos(e){
+  const r = cv.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*cv.width/r.width, y:(e.clientY-r.top)*cv.height/r.height};
+}
+function style(){
+  ctx.strokeStyle = cfg[tool].color; ctx.fillStyle = cfg[tool].color;
+  ctx.lineWidth = cfg[tool].size;
+}
+function pushHistory(){
+  history.push(ctx.getImageData(0,0,cv.width,cv.height));
+  if (history.length > 40) history.shift();
+}
+function drawShape(x,y){
+  ctx.putImageData(snap,0,0); style(); ctx.beginPath();
+  if (tool === 'line'){ ctx.moveTo(sx,sy); ctx.lineTo(x,y); }
+  else if (tool === 'rect'){ ctx.rect(sx,sy,x-sx,y-sy); }
+  else if (tool === 'ellipse'){
+    ctx.ellipse((sx+x)/2,(sy+y)/2,Math.abs(x-sx)/2,Math.abs(y-sy)/2,0,0,Math.PI*2);
+  }
+  ctx.stroke();
+}
+
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  drawing = true; const p = pos(e); sx = p.x; sy = p.y; last = p;
+  style();
+  if (tool === 'pencil' || tool === 'eraser'){
+    ctx.beginPath(); ctx.arc(p.x,p.y,cfg[tool].size/2,0,Math.PI*2); ctx.fill();
+  } else snap = ctx.getImageData(0,0,cv.width,cv.height);
+});
+cv.addEventListener('pointermove', e => {
+  const p = pos(e);
+  document.title = 'My Paint  ' + Math.round(p.x) + ', ' + Math.round(p.y);
+  if (!drawing) return;
+  if (tool === 'pencil' || tool === 'eraser'){
+    style(); ctx.beginPath(); ctx.moveTo(last.x,last.y); ctx.lineTo(p.x,p.y); ctx.stroke(); last = p;
+  } else drawShape(p.x,p.y);
+});
+function end(e){
+  if (!drawing) return; drawing = false;
+  if (tool === 'line' || tool === 'rect' || tool === 'ellipse'){ const p = pos(e); drawShape(p.x,p.y); }
+  pushHistory();
+}
+cv.addEventListener('pointerup', end);
+cv.addEventListener('pointercancel', end);
+
+function undo(){
+  if (history.length < 2) return;
+  history.pop(); ctx.putImageData(history[history.length-1],0,0);
+}
+document.getElementById('undo').onclick = undo;
+document.getElementById('clear').onclick = () => {
+  ctx.fillStyle = '#fff'; ctx.fillRect(0,0,cv.width,cv.height); pushHistory();
+};
+document.getElementById('save').onclick = () => {
+  const a = document.createElement('a'); a.download = 'my-paint.png'; a.href = cv.toDataURL('image/png'); a.click();
+};
+addEventListener('keydown', e => { if ((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); undo(); } });
+refreshUI();
+</script>
+</body>
+</html>
